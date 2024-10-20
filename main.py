@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import math
 import itertools
+import random
 
 import data_retrieval
 
@@ -57,18 +58,21 @@ def portfolio_risk(portfolio, weights):
 def sharpe_ratio(p_return, r_free, risk):
     return (p_return - r_free) / risk
 
-def generate_portfolios(portfolio):
+def generate_portfolios(portfolio, risk_free_rate):
     returns = []
     risks = []
     sharpe_ratios = []
 
     weights_combinations = np.array([comb for comb in itertools.product(np.arange(0, 1 + 0.05, 0.05), repeat=len(portfolio))
                         if np.isclose(sum(comb), 1.0)])
+    if len(weights_combinations) > 20000:
+        weights_combinations = weights_combinations[:20000]
+        random.shuffle(weights_combinations)
 
     for weights in weights_combinations:
         p_return = portfolio_e_return(portfolio, weights)
         p_risk = portfolio_risk(portfolio, weights)
-        p_ratio = sharpe_ratio(p_return, 0.003077, p_risk)
+        p_ratio = sharpe_ratio(p_return, risk_free_rate, p_risk)
 
         returns.append(p_return)
         risks.append(p_risk)
@@ -130,33 +134,63 @@ def plot_portfolios(portfolios, risks, sharpe_ratios, frontier_returns, frontier
     plt.show()
 
 
-def main():
-    stocks_df = pd.read_csv('stocks_data.csv')
-    no_peloton_df = stocks_df.loc[stocks_df['Brand_Name'] != 'peloton']
-    all_stocks = no_peloton_df['Brand_Name'].unique()
+def search_stocks(stocks_df, desired_sharpe_ratio, risk_free_rate, timeframe, start_date, end_date):
+    all_stocks = stocks_df['Brand_Name'].unique()
     stock_combinations = list(itertools.combinations(all_stocks, 5))
-    flag = False
+    random.shuffle(stock_combinations)
     counter = 0
     for combination in stock_combinations:
         counter +=1
-        print(counter)
-        
-        data_retrieval.clean_and_save_stocks(combination)
+        print(f"Processing portfolio number {counter}: {combination}")
+        data_retrieval.clean_and_save_stocks(combination, timeframe, start_date, end_date)
         df = pd.read_csv('selected_stocks_data.csv')
         portfolio = portfolio_as_array(df)
-        gen_portfolios = generate_portfolios(portfolio)
+        gen_portfolios = generate_portfolios(portfolio, risk_free_rate)
         combination_max_sharpe = np.max(gen_portfolios[2])
         combination_max_return = np.max(gen_portfolios[0])
-        if combination_max_sharpe >= 1.5:
-            flag = True
-            print("stocks: " + str(combination))
+        if combination_max_sharpe >= desired_sharpe_ratio:
+            print("Stocks: " + str(combination))
             print("Sharpe ratio: " + str(combination_max_sharpe))
-            print("return: "+ str(combination_max_return))
-            print("weights: " + str(gen_portfolios[3]))
-            frontier_returns, frontier_risks = efficient_frontier(gen_portfolios[0], gen_portfolios[1])
-            plot_portfolios(gen_portfolios[0], gen_portfolios[1], gen_portfolios[2], frontier_returns, frontier_risks)
-        if flag:
-            break
+            print("Returns: "+ str(combination_max_return))
+            print("Weights: " + str(gen_portfolios[3]))
+            return gen_portfolios
+        else:
+            print(f"Unsuitable portfolio, current maximum sharpe ratio {combination_max_sharpe} < {desired_sharpe_ratio}")
+            print("--------------------------------------------------")
+    return []
 
-main()
+def search_portfolios(stocks, timeframe, start_date, end_date):
+    data_retrieval.clean_and_save_stocks(stocks, timeframe, start_date, end_date)
+    df = pd.read_csv('selected_stocks_data.csv')
+    portfolio = portfolio_as_array(df)
+    gen_portfolios = generate_portfolios(portfolio, timeframe)
+
+    return gen_portfolios
+
+
+def main(stocks_choice=None, desired_sharpe_ratio=1.5, timeframe=1, start_date='2020-05-01', end_date='2024-02-01'):
+    # Removing outlier stock due to providing non future proof results
+    risk_free_rate = 0
+    if timeframe == 0:
+        risk_free_rate = 0.00333
+    elif timeframe == 1:
+        risk_free_rate = 0.04
+    else:
+        raise Exception("Please provide a valid timeframe! (0 or 1 for monthly/annual)")
+
+    stocks_df = data_retrieval.import_data('stocks_data.csv')
+    portfolios = []
+    
+
+    if stocks_choice is None:
+        portfolios = search_stocks(stocks_df, desired_sharpe_ratio, risk_free_rate, timeframe, start_date, end_date)
+    else:
+        portfolios = search_portfolios(stocks_choice, timeframe, start_date, end_date)
+        
+    frontier_returns, frontier_risks = efficient_frontier(portfolios[0], portfolios[1])
+    plot_portfolios(portfolios[0], portfolios[1], portfolios[2], frontier_returns, frontier_risks)
+
+    
+
+main(start_date='2010-01-01', end_date='2016-01-01')
 
